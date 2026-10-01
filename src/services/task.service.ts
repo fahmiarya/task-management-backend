@@ -8,6 +8,23 @@ export async function createTask(input: {
 	assigneeId?: string;
 	clientVisible?: boolean;
 }) {
+	if (input.assigneeId) {
+		const member = await prisma.projectMember.findFirst({
+			where: {
+				projectId: input.projectId,
+				userId: input.assigneeId,
+				user: {
+					role: "INTERNAL",
+					deletedAt: null,
+				},
+			},
+		});
+
+		if (!member) {
+			throw new Error("ASSIGNEE_MUST_BE_INTERNAL_PROJECT_MEMBER");
+		}
+	}
+
 	return prisma.task.create({
 		data: {
 			projectId: input.projectId,
@@ -111,6 +128,38 @@ export async function updateTask(
 	userId: string,
 ) {
 	return prisma.$transaction(async (tx) => {
+		const currentTask = await tx.task.findFirst({
+			where: {
+				id: taskId,
+				deletedAt: null,
+			},
+		});
+
+		if (!currentTask) {
+			throw new Error("TASK_NOT_FOUND");
+		}
+
+		if (currentTask.version !== version) {
+			throw new Error("VERSION_CONFLICT");
+		}
+
+		if (input.assigneeId) {
+			const member = await prisma.projectMember.findFirst({
+				where: {
+					projectId: currentTask.projectId,
+					userId: input.assigneeId,
+					user: {
+						role: "INTERNAL",
+						deletedAt: null,
+					},
+				},
+			});
+
+			if (!member) {
+				throw new Error("ASSIGNEE_MUST_BE_INTERNAL_PROJECT_MEMBER");
+			}
+		}
+
 		const updated = await tx.task.updateMany({
 			where: {
 				id: taskId,
@@ -129,23 +178,31 @@ export async function updateTask(
 			throw new Error("VERSION_CONFLICT");
 		}
 
-		const task = await tx.task.findUniqueOrThrow({
-			where: { id: taskId },
-		});
-
 		for (const [column, newValue] of Object.entries(input)) {
+			const oldValue = currentTask[column as keyof typeof currentTask];
+
 			await tx.auditLog.create({
 				data: {
 					taskId,
 					userId,
 					changedColumn: column,
-					oldValue: null,
-					newValue: String(newValue),
+					oldValue:
+						oldValue === null || oldValue === undefined
+							? null
+							: String(oldValue),
+					newValue:
+						newValue === null || newValue === undefined
+							? null
+							: String(newValue),
 				},
 			});
 		}
 
-		return task;
+		return tx.task.findUniqueOrThrow({
+			where: {
+				id: taskId,
+			},
+		});
 	});
 }
 
@@ -194,7 +251,7 @@ export async function changeTaskStatus(
 			});
 
 			if (user?.role === "PRODUCT_MANAGER") {
-				throw new Error("ONLY_EXECUTOR_CAN_COMPLETE");
+				throw new Error("ONLY_EXECUTOR_CAN_CHANGE_STATUS");
 			}
 		}
 
@@ -277,13 +334,83 @@ export async function addTaskDependency(taskId: string, dependsOnId: string) {
 	});
 }
 
-export async function softDeleteTask(taskId: string) {
-	return prisma.task.update({
+export async function getTaskAuditLogs(taskId: string) {
+	return prisma.auditLog.findMany({
 		where: {
-			id: taskId,
+			taskId,
 		},
-		data: {
-			deletedAt: new Date(),
+		orderBy: {
+			createdAt: "desc",
 		},
+		select: {
+			id: true,
+			taskId: true,
+			userId: true,
+			changedColumn: true,
+			oldValue: true,
+			newValue: true,
+			createdAt: true,
+			user: {
+				select: {
+					id: true,
+					name: true,
+					email: true,
+					role: true,
+					department: {
+						select: {
+							name: true,
+						},
+					},
+				},
+			},
+		},
+	});
+}
+
+export async function softDeleteTask(taskId: string, userId: string) {
+	return prisma.$transaction(async (tx) => {
+		const task = await tx.task.findFirst({
+			where: {
+				id: taskId,
+				deletedAt: null,
+			},
+		});
+
+		if (!task) {
+			throw new Error("TASK_NOT_FOUND");
+		}
+
+		const deletedAt = new Date();
+
+		const updated = await tx.task.updateMany({
+			where: {
+				id: taskId,
+				deletedAt: null,
+			},
+			data: {
+				deletedAt,
+				version: {
+					increment: 1,
+				},
+			},
+		});
+
+		if (updated.count === 0) {
+			throw new Error("VERSION_CONFLICT");
+		}
+
+		await tx.auditLog.create({
+			data: {
+				taskId,
+				userId,
+				changedColumn: "deletedAt",
+				oldValue: null,
+				newValue: deletedAt.toISOString(),
+			},
+		});
+
+		return tx.task.findUniqueOrThrow({
+			where: { id: taskId },
+		});
 	});
 }

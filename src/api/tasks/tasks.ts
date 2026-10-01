@@ -11,11 +11,16 @@ import {
 	addTaskDependency,
 	changeTaskStatus,
 	createTask,
+	getTaskAuditLogs,
 	getTaskById,
 	listTasks,
 	softDeleteTask,
 	updateTask,
 } from "@/services/task.service";
+import {
+	createTaskAttachment,
+	getTaskAttachments,
+} from "@/services/task-attachment.service";
 
 const taskRouter = new Hono<{
 	Variables: AuthType;
@@ -48,6 +53,13 @@ const dependencySchema = z.object({
 	dependsOnId: z.string().min(1),
 });
 
+const attachmentSchema = z.object({
+	fileName: z.string().min(1),
+	fileUrl: z.string().url(),
+	mimeType: z.string().optional(),
+	size: z.number().int().nonnegative().optional(),
+});
+
 taskRouter.post("/", zValidator("json", createTaskSchema), async (c) => {
 	const userId = c.get("userId");
 	const authContext = await getAuthContext(userId);
@@ -68,15 +80,32 @@ taskRouter.post("/", zValidator("json", createTaskSchema), async (c) => {
 		return c.json({ success: false, message: "Project not found" }, 404);
 	}
 
-	const task = await createTask(input);
+	try {
+		const task = await createTask(input);
 
-	return c.json(
-		{
-			success: true,
-			data: task,
-		},
-		201,
-	);
+		return c.json(
+			{
+				success: true,
+				data: task,
+			},
+			201,
+		);
+	} catch (error) {
+		if (
+			error instanceof Error &&
+			error.message === "ASSIGNEE_MUST_BE_INTERNAL_PROJECT_MEMBER"
+		) {
+			return c.json(
+				{
+					success: false,
+					message: "Assignee must be an internal project member",
+				},
+				400,
+			);
+		}
+
+		throw error;
+	}
 });
 
 taskRouter.get("/project/:projectId", async (c) => {
@@ -178,14 +207,26 @@ taskRouter.patch(
 				data: updated,
 			});
 		} catch (error) {
-			if (error instanceof Error && error.message === "VERSION_CONFLICT") {
-				return c.json(
-					{
-						success: false,
-						message: "Task was modified by another user",
-					},
-					409,
-				);
+			if (error instanceof Error) {
+				if (error.message === "VERSION_CONFLICT") {
+					return c.json(
+						{
+							success: false,
+							message: "Task was modified by another user",
+						},
+						409,
+					);
+				}
+
+				if (error.message === "ASSIGNEE_MUST_BE_INTERNAL_PROJECT_MEMBER") {
+					return c.json(
+						{
+							success: false,
+							message: "Assignee must be an internal project member",
+						},
+						400,
+					);
+				}
 			}
 
 			throw error;
@@ -412,11 +453,128 @@ taskRouter.delete("/:taskId", async (c) => {
 		return c.json({ success: false, message: "Task not found" }, 404);
 	}
 
-	await softDeleteTask(taskId);
+	await softDeleteTask(taskId, authContext.userId);
 
 	return c.json({
 		success: true,
 		message: "Task deleted successfully",
+	});
+});
+
+taskRouter.get("/:taskId/audit-logs", async (c) => {
+	const userId = c.get("userId");
+	const taskId = c.req.param("taskId");
+
+	const authContext = await getAuthContext(userId);
+
+	if (!authContext) {
+		return c.json({ success: false, message: "User not found" }, 404);
+	}
+
+	const task = await getTaskById(taskId);
+
+	if (!task) {
+		return c.json({ success: false, message: "Task not found" }, 404);
+	}
+
+	const allowed = await canAccessProject(authContext, task.projectId);
+
+	if (!allowed || authContext.role === "CLIENT_GUEST") {
+		return c.json({ success: false, message: "Forbidden" }, 403);
+	}
+
+	const logs = await getTaskAuditLogs(taskId);
+
+	return c.json({
+		success: true,
+		data: logs,
+	});
+});
+
+taskRouter.post("/:taskId/attachments", async (c) => {
+	const auth = await getAuthContext(c.get("userId"));
+
+	if (!auth) {
+		return c.json({ success: false, message: "Unauthorized" }, 401);
+	}
+
+	if (auth.role === "CLIENT_GUEST") {
+		return c.json({ success: false, message: "Forbidden" }, 403);
+	}
+
+	const taskId = c.req.param("taskId");
+
+	const task = await getTaskById(taskId);
+
+	if (!task) {
+		return c.json({ success: false, message: "Task not found" }, 404);
+	}
+
+	const allowed = await canAccessProject(auth, task.projectId);
+
+	if (!allowed) {
+		return c.json({ success: false, message: "Forbidden" }, 403);
+	}
+
+	// Internal engineer hanya boleh upload pada task miliknya.
+	if (auth.role === "INTERNAL" && task.assigneeId !== auth.userId) {
+		return c.json({ success: false, message: "Forbidden" }, 403);
+	}
+
+	const body = attachmentSchema.safeParse(await c.req.json());
+
+	if (!body.success) {
+		return c.json(
+			{
+				success: false,
+				message: "Invalid attachment data",
+				errors: body.error.flatten(),
+			},
+			400,
+		);
+	}
+
+	const attachment = await createTaskAttachment({
+		taskId,
+		uploadedById: auth.userId,
+		...body.data,
+	});
+
+	return c.json(
+		{
+			success: true,
+			data: attachment,
+		},
+		201,
+	);
+});
+
+taskRouter.get("/:taskId/attachments", async (c) => {
+	const auth = await getAuthContext(c.get("userId"));
+
+	if (!auth) {
+		return c.json({ success: false, message: "Unauthorized" }, 401);
+	}
+
+	if (auth.role === "CLIENT_GUEST") {
+		return c.json({ success: false, message: "Forbidden" }, 403);
+	}
+
+	const task = await getTaskById(c.req.param("taskId"));
+
+	if (!task) {
+		return c.json({ success: false, message: "Task not found" }, 404);
+	}
+
+	if (!(await canAccessProject(auth, task.projectId))) {
+		return c.json({ success: false, message: "Forbidden" }, 403);
+	}
+
+	const attachments = await getTaskAttachments(task.id);
+
+	return c.json({
+		success: true,
+		data: attachments,
 	});
 });
 

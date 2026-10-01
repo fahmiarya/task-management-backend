@@ -238,6 +238,10 @@ projectRouter.get("/:projectId/members", async (c) => {
 		return c.json({ success: false, message: "User not found" }, 404);
 	}
 
+	if (authContext.role === "CLIENT_GUEST") {
+		return c.json({ success: false, message: "Forbidden" }, 403);
+	}
+
 	const allowed = await canAccessProject(authContext, projectId);
 
 	if (!allowed) {
@@ -330,6 +334,10 @@ projectRouter.get("/", async (c) => {
 
 	if (!authContext) {
 		return c.json({ success: false, message: "User not found" }, 404);
+	}
+
+	if (authContext.role === "CLIENT_GUEST") {
+		return c.json({ success: false, message: "Forbidden" }, 403);
 	}
 
 	const projects = await prisma.project.findMany({

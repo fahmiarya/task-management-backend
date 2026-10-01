@@ -94,11 +94,22 @@ const baseLoggerConfig: LoggerOptions = {
 			},
 		}),
 		err: pino.stdSerializers.err,
-		user: (user: unknown) => ({
-			id: (user as any)?.id,
-			email: (user as any)?.email,
-			role: (user as any)?.role,
-		}),
+		user: (user: unknown) => {
+			const typedUser = user as
+				| {
+						id?: string;
+						email?: string;
+						role?: string;
+				  }
+				| null
+				| undefined;
+
+			return {
+				id: typedUser?.id,
+				email: typedUser?.email,
+				role: typedUser?.role,
+			};
+		},
 	},
 	transport: createTransports(),
 };
