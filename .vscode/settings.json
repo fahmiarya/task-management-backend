@@ -18,5 +18,8 @@
 	},
 	"files.associations": {
 		"*.json": "jsonc"
+	},
+	"[prisma]": {
+		"editor.defaultFormatter": "Prisma.prisma"
 	}
 }
