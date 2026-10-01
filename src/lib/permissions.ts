@@ -1,85 +1,50 @@
-// Custom RBAC permission system
-export const permissions = {
-	user: ["create", "read", "update", "delete", "ban", "impersonate"],
-	project: ["create", "read", "update", "delete", "manage"],
-	admin: ["read", "manage"],
-	organization: ["create", "read", "update", "delete", "manage", "invite"],
-	team: ["create", "read", "update", "delete", "manage"],
-	invitation: ["create", "read", "update", "delete", "cancel"],
-	member: ["create", "read", "update", "delete"],
-} as const;
+import type {
+	DepartmentName,
+	UserRole,
+} from "../../prisma/generated/prisma-client";
 
-// Define roles with their permissions
-export const rolePermissions = {
-	admin: {
-		user: ["create", "read", "update", "delete", "ban", "impersonate"],
-		project: ["create", "read", "update", "delete", "manage"],
-		admin: ["read", "manage"],
-		organization: ["create", "read", "update", "delete", "manage", "invite"],
-		team: ["create", "read", "update", "delete", "manage"],
-		invitation: ["create", "read", "update", "delete", "cancel"],
-		member: ["create", "read", "update", "delete"],
-	},
-	user: {
-		project: ["create", "read", "update"],
-		organization: ["read"],
-		team: ["read"],
-		invitation: ["read"],
-		member: ["read"],
-	},
-} as const;
+export type Permission =
+	| "project:create"
+	| "project:read"
+	| "project:update"
+	| "project:delete"
+	| "project:manage-members"
+	| "task:create"
+	| "task:read"
+	| "task:update"
+	| "task:delete"
+	| "task:change-status"
+	| "task:manage-dependencies";
 
-// Organization-specific roles
-export const organizationRolePermissions = {
-	owner: {
-		project: ["create", "read", "update", "delete", "manage"],
-		organization: ["read", "update", "manage", "invite"],
-		team: ["create", "read", "update", "delete", "manage"],
-		invitation: ["create", "read", "update", "delete", "cancel"],
-		member: ["create", "read", "update", "delete"],
-		user: ["read"], // Can view organization members
-	},
-	admin: {
-		project: ["create", "read", "update", "delete"],
-		organization: ["read", "update", "invite"],
-		team: ["create", "read", "update", "delete"],
-		invitation: ["create", "read", "update", "delete", "cancel"],
-		member: ["create", "read", "update", "delete"],
-		user: ["read"],
-	},
-	member: {
-		project: ["create", "read", "update"],
-		organization: ["read"],
-		team: ["read"],
-		invitation: ["read"],
-		member: ["read"],
-		user: ["read"],
-	},
-} as const;
+type PermissionContext = {
+	role: UserRole;
+	department: DepartmentName | null;
+};
 
-// Helper functions to check permissions
 export function hasPermission(
-	role: keyof typeof rolePermissions,
-	resource: keyof typeof permissions,
-	action: string,
+	context: PermissionContext,
+	permission: Permission,
 ): boolean {
-	const rolePerms = rolePermissions[role];
-	const resourcePerms = (rolePerms as any)[resource] as
-		| readonly string[]
-		| undefined;
-	return resourcePerms ? resourcePerms.includes(action) : false;
-}
+	if (context.role === "PRODUCT_MANAGER") {
+		return true;
+	}
 
-export function hasOrganizationPermission(
-	role: keyof typeof organizationRolePermissions,
-	resource: keyof typeof organizationRolePermissions.owner,
-	action: string,
-): boolean {
-	const rolePerms = organizationRolePermissions[role];
-	const resourcePerms = rolePerms[resource] as readonly string[] | undefined;
-	return resourcePerms ? resourcePerms.includes(action) : false;
-}
+	if (context.role === "CLIENT_GUEST") {
+		return permission === "project:read" || permission === "task:read";
+	}
 
-// Type definitions for Better Auth configuration
-export type AppRole = keyof typeof rolePermissions;
-export type OrgRole = keyof typeof organizationRolePermissions;
+	if (context.role === "INTERNAL") {
+		if (!context.department) {
+			return false;
+		}
+
+		return [
+			"project:read",
+			"task:read",
+			"task:update",
+			"task:change-status",
+		].includes(permission);
+	}
+
+	return false;
+}

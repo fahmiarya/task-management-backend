@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { prisma } from "prisma/prisma-client";
-import type { AuthType } from "@/lib/auth";
+import type { AuthType } from "@/lib/jwt";
 import { logError, systemLogger } from "@/services/logger";
 
 const systemRouter = new Hono<{ Variables: AuthType }>();

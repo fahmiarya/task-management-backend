@@ -20,6 +20,11 @@
 		"typecheck": "bun --bun tsc --noEmit",
 		"gen:sdk": "bunx @hey-api/openapi-ts -f src/config/hey-api.config.ts"
 	},
+
+	"prisma": {
+		"seed": "bun run prisma/seed.ts"
+	},
+
 	"dependencies": {
 		"@hey-api/openapi-ts": "^0.82.3",
 		"@hono/zod-validator": "^0.7.2",

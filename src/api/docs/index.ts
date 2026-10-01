@@ -2,37 +2,29 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Scalar } from "@scalar/hono-api-reference";
 import { Hono } from "hono";
-import type { AuthType } from "@/lib/auth";
-import { auth } from "@/lib/auth";
+import type { AuthType } from "@/lib/jwt";
 import { systemLogger } from "@/services/logger";
 
 const docsRouter = new Hono<{ Variables: AuthType }>();
 
-/**
- * GET /docs - Serve interactive API documentation with Scalar UI
- */
 docsRouter.get(
 	"/",
 	Scalar({
 		sources: [
-			{ url: "/api/v1/docs/openapi.json", title: "API Boilerplate" },
 			{
-				url: "/api/v1/docs/auth-openapi.json",
-				title: "Authentication (Better Auth)",
+				url: "/api/v1/docs/openapi.json",
+				title: "Task Management API",
 			},
 		],
 		theme: "default",
-		pageTitle: "API Boilerplate Documentation",
+		pageTitle: "Task Management API Documentation",
 	}),
 );
 
-/**
- * GET /docs/openapi.json - Serve the OpenAPI JSON specification
- */
 docsRouter.get("/openapi.json", async (c) => {
 	try {
-		// Read the generated OpenAPI spec
 		const specPath = join(process.cwd(), "src", "api", "docs", "openapi.json");
+
 		const spec = JSON.parse(readFileSync(specPath, "utf-8"));
 
 		return c.json(spec, 200, {
@@ -43,44 +35,17 @@ docsRouter.get("/openapi.json", async (c) => {
 		});
 	} catch (error) {
 		systemLogger.error(
-			{ error, path: "/docs/openapi.json" },
+			{
+				error,
+				path: "/docs/openapi.json",
+			},
 			"Failed to serve OpenAPI specification",
 		);
+
 		return c.json(
 			{
-				error: "Failed to load OpenAPI specification",
-				message:
-					"The API documentation is temporarily unavailable. Please try again later or contact support.",
-			},
-			500,
-		);
-	}
-});
-
-/**
- * GET /docs/auth-openapi.json - Serve the Better-Auth OpenAPI JSON specification
- */
-docsRouter.get("/auth-openapi.json", async (c) => {
-	try {
-		// Generate Better-Auth OpenAPI schema
-		const authSchema = await auth.api.generateOpenAPISchema();
-
-		return c.json(authSchema, 200, {
-			"Content-Type": "application/json; charset=utf-8",
-			"Access-Control-Allow-Origin": "*",
-			"Access-Control-Allow-Methods": "GET",
-			"Access-Control-Allow-Headers": "Content-Type",
-		});
-	} catch (error) {
-		systemLogger.error(
-			{ error, path: "/docs/auth-openapi.json" },
-			"Failed to serve Better-Auth OpenAPI specification",
-		);
-		return c.json(
-			{
-				error: "Failed to load Better-Auth OpenAPI specification",
-				message:
-					"Better-Auth documentation is temporarily unavailable. Please try again later.",
+				success: false,
+				message: "Failed to load OpenAPI specification",
 			},
 			500,
 		);
@@ -88,4 +53,5 @@ docsRouter.get("/auth-openapi.json", async (c) => {
 });
 
 export type AppType = typeof docsRouter;
+
 export default docsRouter;
